@@ -138,6 +138,11 @@ pub struct FormatterConfiguration {
     /// Controls whether lambdas with a single simple statement can stay on one
     /// line, like `array.map(func(x): return x * 2)`. Never by default.
     pub lambda_inline: LambdaInline,
+    /// If true, when an inline lambda that is the last argument doesn't fit on
+    /// the call line, the formatter keeps it on the call line and moves its
+    /// body to the next line instead of wrapping the arguments. Requires
+    /// `lambda_force_wrap_arguments` to be false. Off by default.
+    pub lambda_inline_prefer_call_line: bool,
 }
 
 impl Default for FormatterConfiguration {
@@ -150,6 +155,7 @@ impl Default for FormatterConfiguration {
             quote_style: QuoteStyle::Preserve,
             lambda_force_wrap_arguments: true,
             lambda_inline: LambdaInline::Never,
+            lambda_inline_prefer_call_line: false,
         }
     }
 }

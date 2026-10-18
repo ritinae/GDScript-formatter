@@ -1776,6 +1776,7 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
         begin_indent(context.render_elements, 1)
     };
 
+    let mut hugged_lambda_group_index = None;
     let mut has_comment = false;
     let mut last_was_comment = false;
     let mut trailing_comma_handled = false;
@@ -1891,6 +1892,10 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
                 // header, so the arguments stay flat when the header fits. The
                 // lambda's group is the first render element that
                 // process_lambda() pushes.
+                //
+                // An inline lambda can stay on one line, so groups further up
+                // measure it completely: an outer container only stays flat if
+                // the whole inline lambda fits.
                 let lambda_group_index = context.render_elements.len();
                 process_node(context, child);
                 let Some(RenderElement::Group { parent_fit, .. }) =
@@ -1898,7 +1903,12 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
                 else {
                     unreachable!("process_lambda() always starts with a group");
                 };
-                *parent_fit = GroupParentFit::UntilOwnLineBreak;
+                *parent_fit = if is_inline_lambda_candidate(context.input, child) {
+                    GroupParentFit::DirectParentUntilOwnLineBreak
+                } else {
+                    GroupParentFit::UntilOwnLineBreak
+                };
+                hugged_lambda_group_index = Some(lambda_group_index);
             } else {
                 process_node(context, child);
             }
@@ -1986,11 +1996,9 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
         && !last_was_comment
         && !lambda_has_trailing_comment
     {
-        // A hugged lambda always needs the trailing comma, even when the
-        // arguments stay on the call line. Without it, Godot fails to parse
-        // the closing parenthesis when the call is nested in another
-        // multiline call or container.
-        if hugged_lambda.is_none() {
+        if let Some(lambda_group_index) = hugged_lambda_group_index {
+            push_hugged_lambda_closing(context.render_elements, lambda_group_index);
+        } else {
             let text_index = context.render_elements.len() + 1;
             context.render_elements.push(RenderElement::Branch {
                 if_single_line: None,
@@ -1999,29 +2007,8 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
                     end: text_index + 1,
                 }),
             });
+            context.render_elements.push(RenderElement::TextStatic(","));
         }
-        context.render_elements.push(RenderElement::TextStatic(","));
-    }
-
-    // When the arguments stay on the call line, the closing parenthesis goes on
-    // its own line after the hugged lambda's body.
-    if hugged_lambda.is_some() {
-        let line_group_index = context.render_elements.len() + 1;
-        context.render_elements.push(RenderElement::Branch {
-            if_single_line: Some(RangeRenderElement {
-                start: line_group_index,
-                end: line_group_index + 2,
-            }),
-            if_multiline: None,
-        });
-        context.render_elements.push(RenderElement::Group {
-            children: RangeRenderElement {
-                start: line_group_index + 1,
-                end: line_group_index + 2,
-            },
-            parent_fit: GroupParentFit::UntilFirstLineBreak,
-        });
-        context.render_elements.push(RenderElement::HardLine);
     }
 
     // A single enum member also needs a trailing comma as it's always multiline
@@ -2062,6 +2049,40 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
     if let Some(group_index) = group_index {
         finish_group(context.render_elements, group_index);
     }
+}
+
+/// Appends the trailing comma and line break that follow a lambda kept on the
+/// call line. They depend on both the argument list's layout and the lambda's:
+///
+/// - If the lambda body breaks, it always ends with a comma and the closing
+///   parenthesis goes on its own line. Without the comma, Godot fails to
+///   parse the closing parenthesis when the call is nested in another
+///   multiline call or container.
+/// - If the lambda stays inline, it only needs a comma when the arguments wrap,
+///   like any other last argument.
+fn push_hugged_lambda_closing(render_elements: &mut Vec<RenderElement>, lambda_group_index: usize) {
+    let flat_branch_index = render_elements.len() + 1;
+    render_elements.push(RenderElement::GroupLayoutBranch {
+        group: lambda_group_index,
+        if_single_line: Some(RangeRenderElement {
+            start: flat_branch_index,
+            end: flat_branch_index + 2,
+        }),
+        if_multiline: Some(RangeRenderElement {
+            start: flat_branch_index + 2,
+            end: flat_branch_index + 4,
+        }),
+    });
+    render_elements.push(RenderElement::Branch {
+        if_single_line: None,
+        if_multiline: Some(RangeRenderElement {
+            start: flat_branch_index + 1,
+            end: flat_branch_index + 2,
+        }),
+    });
+    render_elements.push(RenderElement::TextStatic(","));
+    render_elements.push(RenderElement::TextStatic(","));
+    render_elements.push(RenderElement::HardLine);
 }
 
 /// Processes part of an expression and appends render elements, without
@@ -3210,6 +3231,9 @@ fn contains_multiline_lambda_node(input: &ParseInput, node: tree_sitter::Node) -
 /// )
 /// ```
 ///
+/// Inline lambda candidates are only kept on the call line if the user prefers
+/// it over wrapping the arguments when the inline lambda doesn't fit.
+///
 /// Lambdas ending with a match statement are never hugged: Godot can't parse a
 /// trailing comma after a match branch, and without the comma, a hugged lambda
 /// fails to parse inside another multiline call.
@@ -3236,7 +3260,8 @@ fn find_huggable_trailing_lambda_argument<'tree>(
             last_element
         };
     if GDScriptNodeKind::get_kind_from_ast_node(last_element) != GDScriptNodeKind::Lambda
-        || is_inline_lambda_candidate(input, last_element)
+        || (is_inline_lambda_candidate(input, last_element)
+            && !input.lambda_inline_prefer_call_line)
         || is_lambda_body_ending_with_comment(last_element)
         || lambda_ends_with_match_node(last_element)
     {

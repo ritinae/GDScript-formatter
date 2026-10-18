@@ -60,6 +60,13 @@ pub enum GroupParentFit {
     /// parameters and return type, must fit on the call line, while its body
     /// goes on the next lines.
     UntilOwnLineBreak,
+    /// Like `UntilOwnLineBreak` for the enclosing group's own layout decision,
+    /// and like `Full` when groups further up measure this group.
+    ///
+    /// Used for an inline lambda kept on the call line: its argument list stays
+    /// flat if the lambda's header fits, but outer containers only stay flat if
+    /// the whole inline lambda fits.
+    DirectParentUntilOwnLineBreak,
 }
 
 pub enum RenderElement {
@@ -122,6 +129,19 @@ pub enum RenderElement {
     /// currently rendered line fits on a single line, and one if it exceeds max
     /// line length and should be broken into multiple lines.
     Branch {
+        if_single_line: Option<RangeRenderElement>,
+        if_multiline: Option<RangeRenderElement>,
+    },
+    /// Like `Branch`, but selects a sequence depending on the layout the
+    /// renderer chose for an earlier group, at index `group` in the render
+    /// element list, instead of the enclosing group's layout. Used after a
+    /// lambda kept on the call line, whose closing comma and line break depend
+    /// on whether the lambda body stayed inline.
+    ///
+    /// When measuring whether an enclosing group fits on one line, the
+    /// renderer measures `if_single_line`.
+    GroupLayoutBranch {
+        group: usize,
         if_single_line: Option<RangeRenderElement>,
         if_multiline: Option<RangeRenderElement>,
     },
@@ -209,6 +229,7 @@ pub fn render(
         pending_newlines: 0u16,
         indent_level: 0,
         balanced_break_plans: Vec::new(),
+        queried_groups: find_groups_queried_by_layout_branches(render_elements),
     };
     printer.render_range(0, render_elements.len(), Mode::Flat);
     *output = printer.add_to_output_finish();
@@ -249,6 +270,9 @@ struct Printer<'a> {
     pending_newlines: u16,
     indent_level: u16,
     balanced_break_plans: Vec<Vec<usize>>,
+    /// Indices of the groups referenced by `GroupLayoutBranch` elements, sorted,
+    /// with the layout chosen for each group once it's rendered.
+    queried_groups: Vec<(usize, Option<Mode>)>,
 }
 
 impl<'a> Printer<'a> {
@@ -339,6 +363,12 @@ impl<'a> Printer<'a> {
                         children.end,
                         ForceBreakMode::DirectChildren,
                     );
+                    if let Ok(position) = self
+                        .queried_groups
+                        .binary_search_by_key(&index, |(group, _)| *group)
+                    {
+                        self.queried_groups[position].1 = Some(child_mode);
+                    }
                     self.render_range(children.start, children.end, child_mode);
                     index = children.end;
                 }
@@ -364,6 +394,27 @@ impl<'a> Printer<'a> {
                     if_multiline: break_,
                 } => {
                     let selected = if mode == Mode::Break { break_ } else { flat };
+                    if let Some(range) = selected {
+                        self.render_range(range.start, range.end, mode);
+                    }
+                    index = skip_past_branch(index, flat, break_);
+                }
+                RenderElement::GroupLayoutBranch {
+                    group,
+                    if_single_line: flat,
+                    if_multiline: break_,
+                } => {
+                    let group_mode = self
+                        .queried_groups
+                        .binary_search_by_key(group, |(queried, _)| *queried)
+                        .ok()
+                        .and_then(|position| self.queried_groups[position].1)
+                        .unwrap_or(Mode::Flat);
+                    let selected = if group_mode == Mode::Break {
+                        break_
+                    } else {
+                        flat
+                    };
                     if let Some(range) = selected {
                         self.render_range(range.start, range.end, mode);
                     }
@@ -491,6 +542,57 @@ impl<'a> Printer<'a> {
                 }
                 RenderElement::Group {
                     children,
+                    parent_fit:
+                        parent_fit @ (GroupParentFit::UntilOwnLineBreak
+                        | GroupParentFit::DirectParentUntilOwnLineBreak),
+                } => {
+                    if matches!(parent_fit, GroupParentFit::DirectParentUntilOwnLineBreak)
+                        && force_break_mode != ForceBreakMode::DirectChildren
+                    {
+                        // Groups further up measure an inline lambda completely.
+                        let nested_force_break_mode =
+                            if force_break_mode == ForceBreakMode::AnyDepth {
+                                ForceBreakMode::AnyDepth
+                            } else {
+                                ForceBreakMode::Ignore
+                            };
+                        match self.measure_flat_layout(
+                            children.start,
+                            children.end,
+                            column,
+                            nested_force_break_mode,
+                        ) {
+                            FlatLayoutFit::Fits => {}
+                            line_fit => {
+                                return self.finish_measured_line(
+                                    line_fit,
+                                    children.end,
+                                    end,
+                                    force_break_mode,
+                                );
+                            }
+                        }
+                        index = children.end;
+                        continue;
+                    }
+                    // The rest of the content goes on the lines after this
+                    // group's header, so the measured line ends with it.
+                    match self.measure_group_header(children.start, children.end, column) {
+                        Some(true) => {
+                            return self.finish_measured_line(
+                                FlatLayoutFit::FitsUntilLineEnd,
+                                children.end,
+                                end,
+                                force_break_mode,
+                            );
+                        }
+                        Some(false) => return FlatLayoutFit::DoesNotFit,
+                        None => {}
+                    }
+                    index = children.end;
+                }
+                RenderElement::Group {
+                    children,
                     parent_fit: GroupParentFit::Full,
                 }
                 | RenderElement::BalancedGroup { children } => {
@@ -526,29 +628,14 @@ impl<'a> Printer<'a> {
                     }
                     index = children.end;
                 }
-                RenderElement::Group {
-                    children,
-                    parent_fit: GroupParentFit::UntilOwnLineBreak,
-                } => {
-                    // The rest of the content goes on the lines after this
-                    // group's header, so the measured line ends with it.
-                    match self.measure_group_header(children.start, children.end, column) {
-                        Some(true) => {
-                            return self.finish_measured_line(
-                                FlatLayoutFit::FitsUntilLineEnd,
-                                children.end,
-                                end,
-                                force_break_mode,
-                            );
-                        }
-                        Some(false) => return FlatLayoutFit::DoesNotFit,
-                        None => {}
-                    }
-                    index = children.end;
-                }
                 RenderElement::Branch {
                     if_single_line: flat,
                     if_multiline: break_,
+                }
+                | RenderElement::GroupLayoutBranch {
+                    if_single_line: flat,
+                    if_multiline: break_,
+                    ..
                 } => {
                     if let Some(range) = flat {
                         match self.measure_flat_layout(
@@ -622,6 +709,11 @@ impl<'a> Printer<'a> {
                 RenderElement::Branch {
                     if_single_line,
                     if_multiline,
+                }
+                | RenderElement::GroupLayoutBranch {
+                    if_single_line,
+                    if_multiline,
+                    ..
                 } => index = skip_past_branch(index, if_single_line, if_multiline),
                 _ => index += 1,
             }
@@ -693,6 +785,11 @@ impl<'a> Printer<'a> {
                 RenderElement::Branch {
                     if_single_line: flat,
                     if_multiline: break_,
+                }
+                | RenderElement::GroupLayoutBranch {
+                    if_single_line: flat,
+                    if_multiline: break_,
+                    ..
                 } => {
                     if let Some(range) = flat
                         && let Some(fits) =
@@ -759,6 +856,11 @@ impl<'a> Printer<'a> {
                 RenderElement::Branch {
                     if_single_line: flat,
                     if_multiline: break_,
+                }
+                | RenderElement::GroupLayoutBranch {
+                    if_single_line: flat,
+                    if_multiline: break_,
+                    ..
                 } => {
                     if let Some(range) = flat
                         && !self.does_group_prefix_fit(range.start, range.end, column)
@@ -802,6 +904,11 @@ impl<'a> Printer<'a> {
                     RenderElement::Branch {
                         if_single_line,
                         if_multiline,
+                    }
+                    | RenderElement::GroupLayoutBranch {
+                        if_single_line,
+                        if_multiline,
+                        ..
                     } => index = skip_past_branch(index, if_single_line, if_multiline),
                     _ => index += 1,
                 }
@@ -1030,6 +1137,22 @@ impl<'a> Printer<'a> {
         }
         self.output
     }
+}
+
+/// Returns the sorted indices of the groups referenced by `GroupLayoutBranch`
+/// elements, so the printer only records the layout of these groups.
+fn find_groups_queried_by_layout_branches(
+    render_elements: &[RenderElement],
+) -> Vec<(usize, Option<Mode>)> {
+    let mut queried_groups = Vec::new();
+    for element in render_elements {
+        if let RenderElement::GroupLayoutBranch { group, .. } = element {
+            queried_groups.push((*group, None));
+        }
+    }
+    queried_groups.sort_unstable_by_key(|(group, _)| *group);
+    queried_groups.dedup_by_key(|(group, _)| *group);
+    queried_groups
 }
 
 fn skip_past_branch(

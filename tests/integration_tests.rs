@@ -291,6 +291,7 @@ fn editorconfig_applies_lambda_options() {
 
     assert!(!config.lambda_force_wrap_arguments);
     assert_eq!(config.lambda_inline, LambdaInline::Always);
+    assert!(config.lambda_inline_prefer_call_line);
 }
 
 #[test]
@@ -330,6 +331,22 @@ fn lambda_inline_always() {
     };
     test_file_with_config(
         Path::new("tests/lambda_options/input/inline_always.gd"),
+        &config,
+        true,
+    );
+}
+
+#[test]
+fn lambda_inline_prefer_call_line() {
+    let config = FormatterConfiguration {
+        lambda_force_wrap_arguments: false,
+        lambda_inline: LambdaInline::Always,
+        lambda_inline_prefer_call_line: true,
+        safe: true,
+        ..Default::default()
+    };
+    test_file_with_config(
+        Path::new("tests/lambda_options/input/inline_prefer_call_line.gd"),
         &config,
         true,
     );

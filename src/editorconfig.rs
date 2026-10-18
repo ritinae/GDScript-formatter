@@ -116,6 +116,13 @@ pub fn apply_editorconfig_to_formatter_config(
         }
     }
 
+    if let Some(value) = get_bool_from_properties(
+        &properties,
+        "gdscript_formatter_lambda_inline_prefer_call_line",
+    ) {
+        config.lambda_inline_prefer_call_line = value;
+    }
+
     let raw = properties.get_raw_for_key("gdscript_formatter_quote_style");
     if let Some(found_value) = raw.into_option() {
         if let Some(quote_style) = QuoteStyle::from_name(found_value) {

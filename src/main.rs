@@ -521,7 +521,7 @@ fn get_formatted_configuration_as_string(
     };
 
     format!(
-        "Debug: {}\n  max_line_length: {}\n  indentation: {}\n  blank_lines_around_definitions: {}\n  continuation_indent_level: {}\n  quote_style: {}\n  lambda_force_wrap_arguments: {}\n  lambda_inline: {}\n  insert_final_newline: {}\n  trim_trailing_whitespace: {}\n  indent_blank_lines: {}\n  reorder_code: {}\n  verify_structure: {}",
+        "Debug: {}\n  max_line_length: {}\n  indentation: {}\n  blank_lines_around_definitions: {}\n  continuation_indent_level: {}\n  quote_style: {}\n  lambda_force_wrap_arguments: {}\n  lambda_inline: {}\n  lambda_inline_prefer_call_line: {}\n  insert_final_newline: {}\n  trim_trailing_whitespace: {}\n  indent_blank_lines: {}\n  reorder_code: {}\n  verify_structure: {}",
         file_path.display(),
         config.printer.max_line_length,
         indentation_style,
@@ -530,6 +530,7 @@ fn get_formatted_configuration_as_string(
         quote_style,
         config.lambda_force_wrap_arguments,
         config.lambda_inline.name(),
+        config.lambda_inline_prefer_call_line,
         config.printer.insert_final_newline,
         config.printer.trim_trailing_whitespace,
         config.printer.indent_blank_lines,
