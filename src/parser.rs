@@ -20,6 +20,7 @@ pub struct ParseInput<'src> {
     pub quote_style: QuoteStyle,
     pub lambda_force_wrap_arguments: bool,
     pub lambda_inline: LambdaInline,
+    pub lambda_inline_prefer_call_line: bool,
     /// Byte ranges where formatting is disabled by `# fmt: off` / `# fmt: on`
     /// marker comments. Sorted, non-overlapping.
     pub disabled_regions: Vec<RegionWithDisabledFormatting>,
@@ -253,6 +254,7 @@ impl<'src> ParseInput<'src> {
             quote_style: config.quote_style,
             lambda_force_wrap_arguments: config.lambda_force_wrap_arguments,
             lambda_inline: config.lambda_inline,
+            lambda_inline_prefer_call_line: config.lambda_inline_prefer_call_line,
             disabled_regions,
         })
     }
