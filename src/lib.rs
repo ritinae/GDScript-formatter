@@ -91,6 +91,17 @@ pub struct FormatterConfiguration {
     /// If set to `single` or `double`, the formatter will try to use that quote
     /// style for strings.
     pub quote_style: QuoteStyle,
+    /// If true (the default), any function call argument list containing a
+    /// multiline lambda wraps every argument on its own line. Set this to false
+    /// to keep the arguments on the call line when the lambda is the last
+    /// argument:
+    ///
+    /// ```gdscript
+    /// button.pressed.connect(func():
+    ///     print("pressed")
+    /// )
+    /// ```
+    pub lambda_force_wrap_arguments: bool,
 }
 
 impl Default for FormatterConfiguration {
@@ -101,6 +112,7 @@ impl Default for FormatterConfiguration {
             reorder_code: false,
             blank_lines_around_definitions: 2,
             quote_style: QuoteStyle::Preserve,
+            lambda_force_wrap_arguments: true,
         }
     }
 }

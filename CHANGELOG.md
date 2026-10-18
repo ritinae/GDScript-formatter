@@ -7,6 +7,7 @@ This file documents the changes made to the formatter with each release.
 ### Added
 
 - Linter: add support for stdin (#327)
+- Add the `.editorconfig` option `gdscript_formatter_lambda_force_wrap_arguments`: set it to `false` to keep a multiline lambda that ends an argument list on the call line instead of wrapping every argument
 
 ### Fixed
 

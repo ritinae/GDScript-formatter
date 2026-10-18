@@ -53,6 +53,13 @@ pub enum GroupParentFit {
     /// The parent chain stays flat through `f.args.map(`. The `map()` argument
     /// group then breaks and formats the lambda normally.
     UntilFirstLineBreak,
+    /// Stop including this group's contents after its own first potential line
+    /// break, but include nested groups completely, as if they stay flat.
+    ///
+    /// Used for a lambda kept on the call line: its header, including the
+    /// parameters and return type, must fit on the call line, while its body
+    /// goes on the next lines.
+    UntilOwnLineBreak,
 }
 
 pub enum RenderElement {
@@ -87,6 +94,14 @@ pub enum RenderElement {
     SpaceSingleLineOnly,
     /// Represents an indentation level that should be applied to a range of render elements.
     Indent {
+        level: u16,
+        child: RangeRenderElement,
+    },
+    /// Like `Indent`, but only applies the indentation when the enclosing group
+    /// renders in multiline mode. Used to hug a trailing lambda argument: when
+    /// the argument list stays flat, the lambda body is indented relative to
+    /// the call line rather than relative to the arguments.
+    IndentIfBreak {
         level: u16,
         child: RangeRenderElement,
     },
@@ -205,6 +220,18 @@ enum Mode {
     Break,
 }
 
+/// Result of measuring content on a single line.
+#[derive(Clone, Copy, PartialEq)]
+enum FlatLayoutFit {
+    /// The content fits, and the line continues after it.
+    Fits,
+    /// The content fits up to a group measured with
+    /// `GroupParentFit::UntilOwnLineBreak`, and everything after that group
+    /// goes on later lines, so the measured line ends there.
+    FitsUntilLineEnd,
+    DoesNotFit,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum ForceBreakMode {
     Ignore,
@@ -297,6 +324,13 @@ impl<'a> Printer<'a> {
                     self.indent_level += *level;
                     self.render_range(child.start, child.end, mode);
                     self.indent_level -= *level;
+                    index = child.end;
+                }
+                RenderElement::IndentIfBreak { level, child } => {
+                    let applied_level = if mode == Mode::Break { *level } else { 0 };
+                    self.indent_level += applied_level;
+                    self.render_range(child.start, child.end, mode);
+                    self.indent_level -= applied_level;
                     index = child.end;
                 }
                 RenderElement::Group { children, .. } => {
@@ -396,24 +430,36 @@ impl<'a> Printer<'a> {
         column: &mut usize,
         force_break_mode: ForceBreakMode,
     ) -> bool {
+        self.measure_flat_layout(start, end, column, force_break_mode) != FlatLayoutFit::DoesNotFit
+    }
+
+    /// Measures the width of a range of render elements on a single line, for
+    /// `does_range_fit_flat_layout()`.
+    fn measure_flat_layout(
+        &self,
+        start: usize,
+        end: usize,
+        column: &mut usize,
+        force_break_mode: ForceBreakMode,
+    ) -> FlatLayoutFit {
         let mut index = start;
         while index < end {
             match &self.render_elements[index] {
                 RenderElement::Text { range } | RenderElement::UnformattedSource { range } => {
                     if !self.try_add_text_width(slice(self.source, range), column) {
-                        return false;
+                        return FlatLayoutFit::DoesNotFit;
                     }
                     index += 1;
                 }
                 RenderElement::TextStatic(text) => {
                     if !self.try_add_text_width(text, column) {
-                        return false;
+                        return FlatLayoutFit::DoesNotFit;
                     }
                     index += 1;
                 }
                 RenderElement::TextProducedByFormatter(text) => {
                     if !self.try_add_text_width(text, column) {
-                        return false;
+                        return FlatLayoutFit::DoesNotFit;
                     }
                     index += 1;
                 }
@@ -424,15 +470,22 @@ impl<'a> Printer<'a> {
                     index += 1;
                 }
                 RenderElement::SoftLine => index += 1,
-                RenderElement::HardLine | RenderElement::BlankLine => return false,
-                RenderElement::Indent { child, .. } => {
-                    if !self.does_range_fit_flat_layout(
-                        child.start,
-                        child.end,
-                        column,
-                        force_break_mode,
-                    ) {
-                        return false;
+                RenderElement::HardLine | RenderElement::BlankLine => {
+                    return FlatLayoutFit::DoesNotFit;
+                }
+                RenderElement::Indent { child, .. }
+                | RenderElement::IndentIfBreak { child, .. } => {
+                    match self.measure_flat_layout(child.start, child.end, column, force_break_mode)
+                    {
+                        FlatLayoutFit::Fits => {}
+                        line_fit => {
+                            return self.finish_measured_line(
+                                line_fit,
+                                child.end,
+                                end,
+                                force_break_mode,
+                            );
+                        }
                     }
                     index = child.end;
                 }
@@ -446,13 +499,21 @@ impl<'a> Printer<'a> {
                     } else {
                         ForceBreakMode::Ignore
                     };
-                    if !self.does_range_fit_flat_layout(
+                    match self.measure_flat_layout(
                         children.start,
                         children.end,
                         column,
                         nested_force_break_mode,
                     ) {
-                        return false;
+                        FlatLayoutFit::Fits => {}
+                        line_fit => {
+                            return self.finish_measured_line(
+                                line_fit,
+                                children.end,
+                                end,
+                                force_break_mode,
+                            );
+                        }
                     }
                     index = children.end;
                 }
@@ -461,7 +522,27 @@ impl<'a> Printer<'a> {
                     parent_fit: GroupParentFit::UntilFirstLineBreak,
                 } => {
                     if !self.does_group_prefix_fit(children.start, children.end, column) {
-                        return false;
+                        return FlatLayoutFit::DoesNotFit;
+                    }
+                    index = children.end;
+                }
+                RenderElement::Group {
+                    children,
+                    parent_fit: GroupParentFit::UntilOwnLineBreak,
+                } => {
+                    // The rest of the content goes on the lines after this
+                    // group's header, so the measured line ends with it.
+                    match self.measure_group_header(children.start, children.end, column) {
+                        Some(true) => {
+                            return self.finish_measured_line(
+                                FlatLayoutFit::FitsUntilLineEnd,
+                                children.end,
+                                end,
+                                force_break_mode,
+                            );
+                        }
+                        Some(false) => return FlatLayoutFit::DoesNotFit,
+                        None => {}
                     }
                     index = children.end;
                 }
@@ -469,27 +550,165 @@ impl<'a> Printer<'a> {
                     if_single_line: flat,
                     if_multiline: break_,
                 } => {
-                    if let Some(range) = flat
-                        && !self.does_range_fit_flat_layout(
+                    if let Some(range) = flat {
+                        match self.measure_flat_layout(
                             range.start,
                             range.end,
                             column,
                             force_break_mode,
-                        )
-                    {
-                        return false;
+                        ) {
+                            FlatLayoutFit::Fits => {}
+                            line_fit => {
+                                return self.finish_measured_line(
+                                    line_fit,
+                                    skip_past_branch(index, flat, break_),
+                                    end,
+                                    force_break_mode,
+                                );
+                            }
+                        }
                     }
                     index = skip_past_branch(index, flat, break_);
                 }
                 RenderElement::ForceBreakingParent => {
                     if force_break_mode != ForceBreakMode::Ignore {
-                        return false;
+                        return FlatLayoutFit::DoesNotFit;
                     }
                     index += 1;
                 }
             }
         }
-        true
+        FlatLayoutFit::Fits
+    }
+
+    /// Completes a measurement that stopped early. When the measured line ends
+    /// before the end of the range, the rest of the range goes on later lines
+    /// and isn't measured, but a forced break among the rest of the direct
+    /// children still means the measured group can't use a flat layout.
+    fn finish_measured_line(
+        &self,
+        line_fit: FlatLayoutFit,
+        next_index: usize,
+        end: usize,
+        force_break_mode: ForceBreakMode,
+    ) -> FlatLayoutFit {
+        if line_fit == FlatLayoutFit::FitsUntilLineEnd
+            && force_break_mode != ForceBreakMode::Ignore
+            && self.has_direct_force_break(next_index, end)
+        {
+            return FlatLayoutFit::DoesNotFit;
+        }
+        line_fit
+    }
+
+    /// Returns true if the range contains a `ForceBreakingParent` that applies
+    /// to the group being measured, outside of nested groups.
+    fn has_direct_force_break(&self, start: usize, end: usize) -> bool {
+        let mut index = start;
+        while index < end {
+            match &self.render_elements[index] {
+                RenderElement::ForceBreakingParent => return true,
+                RenderElement::Indent { child, .. }
+                | RenderElement::IndentIfBreak { child, .. } => {
+                    if self.has_direct_force_break(child.start, child.end) {
+                        return true;
+                    }
+                    index = child.end;
+                }
+                RenderElement::Group { children, .. }
+                | RenderElement::BalancedGroup { children } => {
+                    index = children.end;
+                }
+                RenderElement::Branch {
+                    if_single_line,
+                    if_multiline,
+                } => index = skip_past_branch(index, if_single_line, if_multiline),
+                _ => index += 1,
+            }
+        }
+        false
+    }
+
+    /// Measures a child group's contents until its own first possible line
+    /// break for its enclosing group's flat-layout fit check. Unlike
+    /// `does_group_prefix_fit()`, nested groups are measured completely, as if
+    /// they stay flat. The child group still chooses its complete layout
+    /// independently.
+    ///
+    /// Returns whether the content fits once it reaches the line break or
+    /// content that can't fit, or `None` if it reaches the end of the range
+    /// without a line break.
+    fn measure_group_header(&self, start: usize, end: usize, column: &mut usize) -> Option<bool> {
+        let mut index = start;
+        while index < end {
+            match &self.render_elements[index] {
+                RenderElement::Text { range } | RenderElement::UnformattedSource { range } => {
+                    if !self.try_add_text_width(slice(self.source, range), column) {
+                        return Some(false);
+                    }
+                    index += 1;
+                }
+                RenderElement::TextStatic(text) => {
+                    if !self.try_add_text_width(text, column) {
+                        return Some(false);
+                    }
+                    index += 1;
+                }
+                RenderElement::TextProducedByFormatter(text) => {
+                    if !self.try_add_text_width(text, column) {
+                        return Some(false);
+                    }
+                    index += 1;
+                }
+                RenderElement::Space
+                | RenderElement::SpaceSingleLineOnly
+                | RenderElement::BalancedLine => {
+                    *column = column.saturating_add(1);
+                    index += 1;
+                }
+                RenderElement::SoftLine | RenderElement::HardLine | RenderElement::BlankLine => {
+                    return Some(*column <= self.config.max_line_length);
+                }
+                RenderElement::Indent { child, .. }
+                | RenderElement::IndentIfBreak { child, .. } => {
+                    if let Some(fits) = self.measure_group_header(child.start, child.end, column) {
+                        return Some(fits);
+                    }
+                    index = child.end;
+                }
+                RenderElement::Group {
+                    children: child, ..
+                }
+                | RenderElement::BalancedGroup { children: child } => {
+                    if !self.does_range_fit_flat_layout(
+                        child.start,
+                        child.end,
+                        column,
+                        ForceBreakMode::Ignore,
+                    ) {
+                        return Some(false);
+                    }
+                    index = child.end;
+                }
+                RenderElement::Branch {
+                    if_single_line: flat,
+                    if_multiline: break_,
+                } => {
+                    if let Some(range) = flat
+                        && let Some(fits) =
+                            self.measure_group_header(range.start, range.end, column)
+                    {
+                        return Some(fits);
+                    }
+                    index = skip_past_branch(index, flat, break_);
+                }
+                RenderElement::ForceBreakingParent => index += 1,
+            }
+            if *column > self.config.max_line_length {
+                return Some(false);
+            }
+        }
+        None
     }
 
     /// Measures a child group's contents until its first possible line break
@@ -527,6 +746,7 @@ impl<'a> Printer<'a> {
                     return *column <= self.config.max_line_length;
                 }
                 RenderElement::Indent { child, .. }
+                | RenderElement::IndentIfBreak { child, .. }
                 | RenderElement::Group {
                     children: child, ..
                 }
@@ -575,7 +795,8 @@ impl<'a> Printer<'a> {
                         found_boundaries.push(index);
                         index += 1;
                     }
-                    RenderElement::Indent { child, .. } => index = child.end,
+                    RenderElement::Indent { child, .. }
+                    | RenderElement::IndentIfBreak { child, .. } => index = child.end,
                     RenderElement::Group { children, .. }
                     | RenderElement::BalancedGroup { children } => index = children.end,
                     RenderElement::Branch {

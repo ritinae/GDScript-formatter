@@ -521,13 +521,14 @@ fn get_formatted_configuration_as_string(
     };
 
     format!(
-        "Debug: {}\n  max_line_length: {}\n  indentation: {}\n  blank_lines_around_definitions: {}\n  continuation_indent_level: {}\n  quote_style: {}\n  insert_final_newline: {}\n  trim_trailing_whitespace: {}\n  indent_blank_lines: {}\n  reorder_code: {}\n  verify_structure: {}",
+        "Debug: {}\n  max_line_length: {}\n  indentation: {}\n  blank_lines_around_definitions: {}\n  continuation_indent_level: {}\n  quote_style: {}\n  lambda_force_wrap_arguments: {}\n  insert_final_newline: {}\n  trim_trailing_whitespace: {}\n  indent_blank_lines: {}\n  reorder_code: {}\n  verify_structure: {}",
         file_path.display(),
         config.printer.max_line_length,
         indentation_style,
         config.blank_lines_around_definitions,
         config.printer.continuation_indent_level,
         quote_style,
+        config.lambda_force_wrap_arguments,
         config.printer.insert_final_newline,
         config.printer.trim_trailing_whitespace,
         config.printer.indent_blank_lines,

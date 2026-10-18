@@ -280,3 +280,28 @@ fn editorconfig_applies_quote_style() {
 
     assert_eq!(config.quote_style, QuoteStyle::Single);
 }
+
+#[test]
+fn editorconfig_applies_lambda_force_wrap_arguments() {
+    let mut config = FormatterConfiguration::default();
+    gdscript_formatter::editorconfig::apply_editorconfig_to_formatter_config(
+        &mut config,
+        Path::new("tests/manual_test_files/hello_world.gd"),
+    );
+
+    assert!(!config.lambda_force_wrap_arguments);
+}
+
+#[test]
+fn lambda_no_forced_argument_wrap() {
+    let config = FormatterConfiguration {
+        lambda_force_wrap_arguments: false,
+        safe: true,
+        ..Default::default()
+    };
+    test_file_with_config(
+        Path::new("tests/lambda_options/input/no_forced_wrap.gd"),
+        &config,
+        true,
+    );
+}

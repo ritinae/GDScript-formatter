@@ -27,10 +27,21 @@ fn begin_indent(render_elements: &mut Vec<RenderElement>, level: u16) -> usize {
     index
 }
 
+fn begin_indent_if_break(render_elements: &mut Vec<RenderElement>, level: u16) -> usize {
+    let index = render_elements.len();
+    render_elements.push(RenderElement::IndentIfBreak {
+        level,
+        child: RangeRenderElement { start: 0, end: 0 },
+    });
+    index
+}
+
 fn finish_indent(render_elements: &mut [RenderElement], indent_index: usize) {
     let first_child = indent_index + 1;
     let end = render_elements.len();
-    if let RenderElement::Indent { child, .. } = &mut render_elements[indent_index] {
+    if let RenderElement::Indent { child, .. } | RenderElement::IndentIfBreak { child, .. } =
+        &mut render_elements[indent_index]
+    {
         *child = RangeRenderElement {
             start: first_child,
             end,
@@ -1747,9 +1758,23 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
     }
     context.render_elements.push(RenderElement::SoftLine);
 
+    let hugged_lambda = if group_index.is_some() {
+        find_huggable_trailing_lambda_argument(context.input, node)
+    } else {
+        None
+    };
+
     // When we have delimiters like in a function calls, we apply just one
     // indent. We don't treat them as continuation lines.
-    let indent_index = begin_indent(context.render_elements, 1);
+    //
+    // When hugging a trailing lambda, the arguments only get indented if the
+    // argument list wraps. Otherwise, the lambda body is indented relative to
+    // the call line.
+    let indent_index = if hugged_lambda.is_some() {
+        begin_indent_if_break(context.render_elements, 1)
+    } else {
+        begin_indent(context.render_elements, 1)
+    };
 
     let mut has_comment = false;
     let mut last_was_comment = false;
@@ -1861,7 +1886,22 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
                 context.render_elements.push(RenderElement::BlankLine);
             }
             skip_next_separator = false;
-            process_node(context, child);
+            if hugged_lambda == Some(child) {
+                // The surrounding argument group only measures the lambda's
+                // header, so the arguments stay flat when the header fits. The
+                // lambda's group is the first render element that
+                // process_lambda() pushes.
+                let lambda_group_index = context.render_elements.len();
+                process_node(context, child);
+                let Some(RenderElement::Group { parent_fit, .. }) =
+                    context.render_elements.get_mut(lambda_group_index)
+                else {
+                    unreachable!("process_lambda() always starts with a group");
+                };
+                *parent_fit = GroupParentFit::UntilOwnLineBreak;
+            } else {
+                process_node(context, child);
+            }
             if child_kind == GDScriptNodeKind::TokenComma {
                 let mut next_is_comment = false;
                 let mut next_same_line = false;
@@ -1896,24 +1936,6 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
             last_was_comment = is_comment;
         }
         index += 1;
-    }
-
-    /// Returns true if the node or any of its children contains a lambda. Lambda
-    /// bodies force every enclosing delimiter to use a multiline layout.
-    fn contains_lambda_node(node: tree_sitter::Node) -> bool {
-        if GDScriptNodeKind::get_kind_from_ast_node(node) == GDScriptNodeKind::Lambda {
-            return true;
-        }
-        let mut child_index = 0;
-        while child_index < node.child_count() {
-            if let Some(child) = node.child(child_index)
-                && contains_lambda_node(child)
-            {
-                return true;
-            }
-            child_index += 1;
-        }
-        false
     }
 
     // A container's children are: [open_delimiter, elements_and_commas...,
@@ -1975,13 +1997,34 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
         context.render_elements.push(RenderElement::TextStatic(","));
     }
 
+    // When the arguments stay on the call line, the closing parenthesis goes on
+    // its own line after the hugged lambda's body.
+    if hugged_lambda.is_some() {
+        let line_group_index = context.render_elements.len() + 1;
+        context.render_elements.push(RenderElement::Branch {
+            if_single_line: Some(RangeRenderElement {
+                start: line_group_index,
+                end: line_group_index + 2,
+            }),
+            if_multiline: None,
+        });
+        context.render_elements.push(RenderElement::Group {
+            children: RangeRenderElement {
+                start: line_group_index + 1,
+                end: line_group_index + 2,
+            },
+            parent_fit: GroupParentFit::UntilFirstLineBreak,
+        });
+        context.render_elements.push(RenderElement::HardLine);
+    }
+
     // A single enum member also needs a trailing comma as it's always multiline
     // (even if it fits on one line).
     if is_non_empty_enum && !contains_more_than_one_element && !trailing_comma_handled {
         context.render_elements.push(RenderElement::TextStatic(","));
     }
 
-    if is_non_empty_enum || contains_lambda {
+    if is_non_empty_enum || (contains_lambda && hugged_lambda.is_none()) {
         context
             .render_elements
             .push(RenderElement::ForceBreakingParent);
@@ -3047,6 +3090,82 @@ fn process_lambda(context: &mut FormatterContext, node: tree_sitter::Node) {
     }
 
     finish_group(context.render_elements, group_index);
+}
+
+/// Returns true if the node or any of its children contains a lambda. Lambda
+/// bodies force every enclosing delimiter to use a multiline layout.
+fn contains_lambda_node(node: tree_sitter::Node) -> bool {
+    if GDScriptNodeKind::get_kind_from_ast_node(node) == GDScriptNodeKind::Lambda {
+        return true;
+    }
+    let mut child_index = 0;
+    while child_index < node.child_count() {
+        if let Some(child) = node.child(child_index)
+            && contains_lambda_node(child)
+        {
+            return true;
+        }
+        child_index += 1;
+    }
+    false
+}
+
+/// If the user turned off forced wrapping of lambda arguments, returns the
+/// lambda that ends this argument list when the formatter can keep it next to
+/// the other arguments on the call line, like:
+///
+/// ```gdscript
+/// timer.timeout.connect(func():
+///     print("timeout")
+/// )
+/// ```
+fn find_huggable_trailing_lambda_argument<'tree>(
+    input: &ParseInput,
+    arguments: tree_sitter::Node<'tree>,
+) -> Option<tree_sitter::Node<'tree>> {
+    if input.lambda_force_wrap_arguments
+        || GDScriptNodeKind::get_kind_from_ast_node(arguments) != GDScriptNodeKind::Arguments
+    {
+        return None;
+    }
+    let child_count = arguments.child_count();
+    if child_count < 3 {
+        return None;
+    }
+    let mut last_element_index = child_count - 2;
+    let last_element = arguments.child(last_element_index)?;
+    let last_element =
+        if GDScriptNodeKind::get_kind_from_ast_node(last_element) == GDScriptNodeKind::TokenComma {
+            last_element_index -= 1;
+            arguments.child(last_element_index)?
+        } else {
+            last_element
+        };
+    if GDScriptNodeKind::get_kind_from_ast_node(last_element) != GDScriptNodeKind::Lambda
+        || is_lambda_body_ending_with_comment(last_element)
+    {
+        return None;
+    }
+    let mut child_index = 1;
+    while child_index < last_element_index {
+        let child = arguments.child(child_index)?;
+        if GDScriptNodeKind::get_kind_from_ast_node(child) == GDScriptNodeKind::Comment
+            || contains_lambda_node(child)
+        {
+            return None;
+        }
+        child_index += 1;
+    }
+    // A comment between the lambda and the closing parenthesis.
+    let mut child_index = last_element_index + 1;
+    while child_index < child_count - 1 {
+        let child = arguments.child(child_index)?;
+        if GDScriptNodeKind::get_kind_from_ast_node(child) == GDScriptNodeKind::Comment {
+            return None;
+        }
+        child_index += 1;
+    }
+    Some(last_element)
 }
 
 fn is_lambda_body_ending_with_comment(lambda: tree_sitter::Node) -> bool {

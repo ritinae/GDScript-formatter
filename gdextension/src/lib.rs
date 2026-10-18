@@ -81,6 +81,7 @@ fn dict_to_formatter_config(dict: &Dictionary<Variant, Variant>) -> FormatterCon
     extract_field!(dict, safe, bool, result);
     extract_field!(dict, reorder_code, bool, result);
     extract_field!(dict, blank_lines_around_definitions, u16, result);
+    extract_field!(dict, lambda_force_wrap_arguments, bool, result);
     if let Some(variant) = dict.get("printer") {
         match variant.try_to::<Dictionary<Variant, Variant>>() {
             Ok(sub_dict) => result.printer = dict_to_printer_config(&sub_dict),
