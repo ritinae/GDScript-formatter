@@ -3,8 +3,8 @@
 //! and determine the code's formatting. Across the formatter we try hard to
 //! only read text and only copy it when it's time to render the formatted code.
 
-use crate::QuoteStyle;
 use crate::node_kind::GDScriptNodeKind;
+use crate::{LambdaInline, QuoteStyle};
 use tree_sitter;
 
 pub struct ParseInput<'src> {
@@ -19,6 +19,7 @@ pub struct ParseInput<'src> {
     pub max_line_length: usize,
     pub quote_style: QuoteStyle,
     pub lambda_force_wrap_arguments: bool,
+    pub lambda_inline: LambdaInline,
     /// Byte ranges where formatting is disabled by `# fmt: off` / `# fmt: on`
     /// marker comments. Sorted, non-overlapping.
     pub disabled_regions: Vec<RegionWithDisabledFormatting>,
@@ -251,6 +252,7 @@ impl<'src> ParseInput<'src> {
             max_line_length: config.printer.max_line_length,
             quote_style: config.quote_style,
             lambda_force_wrap_arguments: config.lambda_force_wrap_arguments,
+            lambda_inline: config.lambda_inline,
             disabled_regions,
         })
     }

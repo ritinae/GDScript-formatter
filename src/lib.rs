@@ -76,6 +76,39 @@ impl QuoteStyle {
     }
 }
 
+/// Selects when the formatter puts a lambda with a single simple statement (an
+/// expression, `return`, or `pass`) on one line. Inline lambdas always wrap if
+/// they don't fit within the max line length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LambdaInline {
+    /// Always put lambda bodies on their own lines.
+    Never,
+    /// Keep lambdas inline only if they're written on a single line in the
+    /// source.
+    Preserve,
+    /// Collapse every lambda that fits on one line.
+    Always,
+}
+
+impl LambdaInline {
+    pub fn from_name(value: &str) -> Option<Self> {
+        match value {
+            "never" => Some(Self::Never),
+            "preserve" => Some(Self::Preserve),
+            "always" => Some(Self::Always),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::Preserve => "preserve",
+            Self::Always => "always",
+        }
+    }
+}
+
 /// Holds all the formatter configuration. The printer field stores the max line
 /// width, indent, and any other rendering config the renderer needs. `safe` and
 /// future formatter-only feature flags should be added here.
@@ -102,6 +135,9 @@ pub struct FormatterConfiguration {
     /// )
     /// ```
     pub lambda_force_wrap_arguments: bool,
+    /// Controls whether lambdas with a single simple statement can stay on one
+    /// line, like `array.map(func(x): return x * 2)`. Never by default.
+    pub lambda_inline: LambdaInline,
 }
 
 impl Default for FormatterConfiguration {
@@ -113,6 +149,7 @@ impl Default for FormatterConfiguration {
             blank_lines_around_definitions: 2,
             quote_style: QuoteStyle::Preserve,
             lambda_force_wrap_arguments: true,
+            lambda_inline: LambdaInline::Never,
         }
     }
 }

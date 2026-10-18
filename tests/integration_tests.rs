@@ -4,7 +4,7 @@
 /// folders.
 use gdscript_formatter::linter::{GDScriptLinter, LinterConfig};
 use gdscript_formatter::{
-    FormatterConfiguration, PrinterConfiguration, QuoteStyle, format_gdscript,
+    FormatterConfiguration, LambdaInline, PrinterConfiguration, QuoteStyle, format_gdscript,
 };
 use similar::{ChangeTag, TextDiff};
 use std::fs;
@@ -282,7 +282,7 @@ fn editorconfig_applies_quote_style() {
 }
 
 #[test]
-fn editorconfig_applies_lambda_force_wrap_arguments() {
+fn editorconfig_applies_lambda_options() {
     let mut config = FormatterConfiguration::default();
     gdscript_formatter::editorconfig::apply_editorconfig_to_formatter_config(
         &mut config,
@@ -290,6 +290,7 @@ fn editorconfig_applies_lambda_force_wrap_arguments() {
     );
 
     assert!(!config.lambda_force_wrap_arguments);
+    assert_eq!(config.lambda_inline, LambdaInline::Always);
 }
 
 #[test]
@@ -301,6 +302,49 @@ fn lambda_no_forced_argument_wrap() {
     };
     test_file_with_config(
         Path::new("tests/lambda_options/input/no_forced_wrap.gd"),
+        &config,
+        true,
+    );
+}
+
+#[test]
+fn lambda_inline_preserve() {
+    let config = FormatterConfiguration {
+        lambda_inline: LambdaInline::Preserve,
+        safe: true,
+        ..Default::default()
+    };
+    test_file_with_config(
+        Path::new("tests/lambda_options/input/inline_preserve.gd"),
+        &config,
+        true,
+    );
+}
+
+#[test]
+fn lambda_inline_always() {
+    let config = FormatterConfiguration {
+        lambda_inline: LambdaInline::Always,
+        safe: true,
+        ..Default::default()
+    };
+    test_file_with_config(
+        Path::new("tests/lambda_options/input/inline_always.gd"),
+        &config,
+        true,
+    );
+}
+
+#[test]
+fn lambda_inline_preserve_and_no_forced_argument_wrap() {
+    let config = FormatterConfiguration {
+        lambda_force_wrap_arguments: false,
+        lambda_inline: LambdaInline::Preserve,
+        safe: true,
+        ..Default::default()
+    };
+    test_file_with_config(
+        Path::new("tests/lambda_options/input/inline_and_no_forced_wrap.gd"),
         &config,
         true,
     );

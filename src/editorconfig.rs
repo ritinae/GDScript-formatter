@@ -5,7 +5,7 @@
 //! editorconfig's features. Custom keys are read as plain strings and parsed
 //! manually.
 
-use crate::{FormatterConfiguration, QuoteStyle, linter::LinterConfig};
+use crate::{FormatterConfiguration, LambdaInline, QuoteStyle, linter::LinterConfig};
 use ec4rs::Properties;
 use ec4rs::property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TrimTrailingWs};
 use std::path::Path;
@@ -107,6 +107,13 @@ pub fn apply_editorconfig_to_formatter_config(
         "gdscript_formatter_lambda_force_wrap_arguments",
     ) {
         config.lambda_force_wrap_arguments = value;
+    }
+
+    let raw = properties.get_raw_for_key("gdscript_formatter_lambda_inline");
+    if let Some(found_value) = raw.into_option() {
+        if let Some(lambda_inline) = LambdaInline::from_name(found_value) {
+            config.lambda_inline = lambda_inline;
+        }
     }
 
     let raw = properties.get_raw_for_key("gdscript_formatter_quote_style");
