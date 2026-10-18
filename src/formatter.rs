@@ -2875,16 +2875,15 @@ fn process_method_call_arguments(
             argument_index += 1;
         }
 
+        // Prevent a multiline argument list from forcing the surrounding
+        // method call chain to use explicit line continuations (trailing "\").
+        let group_index = begin_group_until_first_line_break(context.render_elements);
         if has_lambda_argument {
             process_node(context, args);
         } else {
-            // Prevent a multiline argument list from forcing the surrounding
-            // method call chain to use explicit line continuations (trailing
-            // "\").
-            let group_index = begin_group_until_first_line_break(context.render_elements);
             process_method_arguments_flat(context, args);
-            finish_group(context.render_elements, group_index);
         }
+        finish_group(context.render_elements, group_index);
     }
 }
 
