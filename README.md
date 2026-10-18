@@ -90,6 +90,14 @@ To exclude files or directories, pass `--exclude` (or `-x`) one or more times, f
 
 Use `--quote-style preserve/single/double` to automatically normalize the string quote style. You can also set the style in your `.editorconfig` file using the key `gdscript_formatter_quote_style`. The default value, `preserve`, leaves existing quotes unchanged.
 
+By default, a function call that takes a multiline lambda puts every argument on its own line. Set `gdscript_formatter_lambda_force_wrap_arguments = false` in your `.editorconfig` file to keep a multiline lambda on the call line when it's the last argument. If the call line is too long, the arguments still wrap:
+
+```gdscript
+button.pressed.connect(func():
+	print("pressed")
+)
+```
+
 The Godot add-on also reads `gdscript_formatter_format_on_save` from the `.editorconfig` file. This key only affects the add-on and enables or disables format on save for the whole project and overrides each user's add-on setting. For example:
 
 ```ini

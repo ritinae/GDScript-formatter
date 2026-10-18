@@ -90,6 +90,14 @@ pub enum RenderElement {
         level: u16,
         child: RangeRenderElement,
     },
+    /// Like `Indent`, but only applies the indentation when the enclosing group
+    /// renders in multiline mode. Used to hug a trailing lambda argument: when
+    /// the argument list stays flat, the lambda body is indented relative to
+    /// the call line rather than relative to the arguments.
+    IndentIfBreak {
+        level: u16,
+        child: RangeRenderElement,
+    },
     /// Groups a set of tokens together for the line wrapping algorithm.
     Group {
         children: RangeRenderElement,
@@ -299,6 +307,13 @@ impl<'a> Printer<'a> {
                     self.indent_level -= *level;
                     index = child.end;
                 }
+                RenderElement::IndentIfBreak { level, child } => {
+                    let applied_level = if mode == Mode::Break { *level } else { 0 };
+                    self.indent_level += applied_level;
+                    self.render_range(child.start, child.end, mode);
+                    self.indent_level -= applied_level;
+                    index = child.end;
+                }
                 RenderElement::Group { children, .. } => {
                     let child_mode = self.decide_group_render_mode(
                         children.start,
@@ -425,7 +440,8 @@ impl<'a> Printer<'a> {
                 }
                 RenderElement::SoftLine => index += 1,
                 RenderElement::HardLine | RenderElement::BlankLine => return false,
-                RenderElement::Indent { child, .. } => {
+                RenderElement::Indent { child, .. }
+                | RenderElement::IndentIfBreak { child, .. } => {
                     if !self.does_range_fit_flat_layout(
                         child.start,
                         child.end,
@@ -527,6 +543,7 @@ impl<'a> Printer<'a> {
                     return *column <= self.config.max_line_length;
                 }
                 RenderElement::Indent { child, .. }
+                | RenderElement::IndentIfBreak { child, .. }
                 | RenderElement::Group {
                     children: child, ..
                 }
@@ -575,7 +592,8 @@ impl<'a> Printer<'a> {
                         found_boundaries.push(index);
                         index += 1;
                     }
-                    RenderElement::Indent { child, .. } => index = child.end,
+                    RenderElement::Indent { child, .. }
+                    | RenderElement::IndentIfBreak { child, .. } => index = child.end,
                     RenderElement::Group { children, .. }
                     | RenderElement::BalancedGroup { children } => index = children.end,
                     RenderElement::Branch {

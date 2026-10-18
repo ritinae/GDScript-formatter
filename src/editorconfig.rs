@@ -27,6 +27,14 @@ pub fn is_excluded_by_editorconfig(editorconfig_file_path: &Path) -> bool {
         .is_some_and(|value| value == "true")
 }
 
+fn get_bool_from_properties(properties: &Properties, key: &str) -> Option<bool> {
+    match properties.get_raw_for_key(key).into_option() {
+        Some("true") => Some(true),
+        Some("false") => Some(false),
+        _ => None,
+    }
+}
+
 fn get_max_line_length_from_properties(properties: &Properties) -> Option<usize> {
     match properties.get::<MaxLineLen>() {
         Ok(MaxLineLen::Value(max_line_length)) if max_line_length > 0 => Some(max_line_length),
@@ -88,13 +96,17 @@ pub fn apply_editorconfig_to_formatter_config(
         }
     }
 
-    let raw = properties.get_raw_for_key("gdscript_formatter_indent_blank_lines");
-    if let Some(found_value) = raw.into_option() {
-        if found_value == "true" {
-            config.printer.indent_blank_lines = true;
-        } else if found_value == "false" {
-            config.printer.indent_blank_lines = false;
-        }
+    if let Some(value) =
+        get_bool_from_properties(&properties, "gdscript_formatter_indent_blank_lines")
+    {
+        config.printer.indent_blank_lines = value;
+    }
+
+    if let Some(value) = get_bool_from_properties(
+        &properties,
+        "gdscript_formatter_lambda_force_wrap_arguments",
+    ) {
+        config.lambda_force_wrap_arguments = value;
     }
 
     let raw = properties.get_raw_for_key("gdscript_formatter_quote_style");

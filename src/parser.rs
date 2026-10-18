@@ -18,6 +18,7 @@ pub struct ParseInput<'src> {
     pub continuation_indent_level: u16,
     pub max_line_length: usize,
     pub quote_style: QuoteStyle,
+    pub lambda_force_wrap_arguments: bool,
     /// Byte ranges where formatting is disabled by `# fmt: off` / `# fmt: on`
     /// marker comments. Sorted, non-overlapping.
     pub disabled_regions: Vec<RegionWithDisabledFormatting>,
@@ -249,6 +250,7 @@ impl<'src> ParseInput<'src> {
             continuation_indent_level: config.printer.continuation_indent_level,
             max_line_length: config.printer.max_line_length,
             quote_style: config.quote_style,
+            lambda_force_wrap_arguments: config.lambda_force_wrap_arguments,
             disabled_regions,
         })
     }
