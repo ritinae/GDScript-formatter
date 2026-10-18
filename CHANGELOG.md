@@ -15,6 +15,7 @@ This file documents the changes made to the formatter with each release.
 - Fix formatter giving parse error on a file using `$%` for getting nodes (#363)
 - Fix a lambda argument in the middle of a method chain (like `items.filter(func(item): ...).size()`) breaking the whole chain at every dot with line continuations
 - Safe mode: fix formatting failing with a structural change error when the formatter wraps a long statement with line continuations (`\`)
+- Fix converting the quotes of a multiline string with `--quote-style` re-indenting the lines inside the string
 
 ## Release 0.27.0 (2026-09-25)
 

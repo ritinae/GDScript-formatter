@@ -201,6 +201,23 @@ lines"""
 }
 
 #[test]
+fn quote_style_keeps_multiline_string_contents() {
+    // Changing the quotes of a multiline string must not re-indent the lines
+    // inside the string, as that changes the string's value.
+    let input = "func test():\n\tvar text = \"\"\"\n\tfirst line\n\t\tsecond line\n\"\"\"\n";
+    let expected = "func test():\n\tvar text = '''\n\tfirst line\n\t\tsecond line\n'''\n";
+    let config = FormatterConfiguration {
+        quote_style: QuoteStyle::Single,
+        safe: true,
+        ..Default::default()
+    };
+
+    let output = format_gdscript(input, &config).unwrap();
+    assert_eq!(output, expected);
+    assert_eq!(format_gdscript(&output, &config).unwrap(), output);
+}
+
+#[test]
 fn parse_errors_are_rejected_before_formatting() {
     let input = "var b=1\nvar name.bla = value\nvar a=2\n";
     let config = FormatterConfiguration {

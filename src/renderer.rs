@@ -62,7 +62,8 @@ pub enum RenderElement {
     TextStatic(&'static str),
     /// Text produced or edited by the formatter rather than copied from the
     /// source. Used if the user set the option to change quote style, to edit
-    /// the quotes of input strings.
+    /// the quotes of input strings. The renderer outputs it verbatim, so line
+    /// returns inside multiline strings are not re-indented.
     TextProducedByFormatter(String),
     /// Represents a single space character.
     Space,
@@ -238,7 +239,7 @@ impl<'a> Printer<'a> {
                     index += 1;
                 }
                 RenderElement::TextProducedByFormatter(text) => {
-                    self.add_to_output(text);
+                    self.add_verbatim_to_output(text);
                     index += 1;
                 }
                 RenderElement::Space => {
@@ -339,24 +340,7 @@ impl<'a> Printer<'a> {
                 }
                 RenderElement::UnformattedSource { range } => {
                     let text = slice(self.source, range);
-                    // Insert raw text to the output without any formatting
-                    // while tracking the current column and pending newlines to
-                    // keep track of indentation.
-                    self.add_to_output_process_newlines();
-                    for c in text.chars() {
-                        if c == '\n' {
-                            self.output.push('\n');
-                            self.column = 0;
-                            self.pending_newlines = 0;
-                        } else {
-                            self.output.push(c);
-                            if c == '\t' {
-                                self.column += self.config.indent_size;
-                            } else {
-                                self.column += 1;
-                            }
-                        }
-                    }
+                    self.add_verbatim_to_output(text);
                     index += 1;
                 }
             }
@@ -738,6 +722,28 @@ impl<'a> Printer<'a> {
                 self.pending_newlines += 1;
             } else {
                 self.add_to_output_process_newlines();
+                self.output.push(c);
+                if c == '\t' {
+                    self.column += self.config.indent_size;
+                } else {
+                    self.column += 1;
+                }
+            }
+        }
+    }
+
+    /// Inserts raw text to the output without any formatting: line returns in
+    /// the text are output as-is instead of being re-indented. Still tracks
+    /// the current column and applies pending newlines and indentation before
+    /// the text.
+    fn add_verbatim_to_output(&mut self, text: &str) {
+        self.add_to_output_process_newlines();
+        for c in text.chars() {
+            if c == '\n' {
+                self.output.push('\n');
+                self.column = 0;
+                self.pending_newlines = 0;
+            } else {
                 self.output.push(c);
                 if c == '\t' {
                     self.column += self.config.indent_size;
