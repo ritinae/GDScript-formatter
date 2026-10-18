@@ -14,6 +14,7 @@ This file documents the changes made to the formatter with each release.
 - Keep parenthesized lambda parentheses next to the lambda body when they are followed by an attribute call (#364)
 - Fix formatter giving parse error on a file using `$%` for getting nodes (#363)
 - Fix a lambda argument in the middle of a method chain (like `items.filter(func(item): ...).size()`) breaking the whole chain at every dot with line continuations
+- Safe mode: fix formatting failing with a structural change error when the formatter wraps a long statement with line continuations (`\`)
 
 ## Release 0.27.0 (2026-09-25)
 

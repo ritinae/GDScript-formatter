@@ -24,6 +24,10 @@
 //!    expression so it can wrap safely. Parenthesized expressions are ignored and
 //!    normalized to their inner expression before checking.
 //!
+//! 4. Line continuations: the formatter may add backslashes (`\`) to wrap long
+//!    statements without delimiters, like method chains. Line continuation
+//!    nodes are ignored.
+//!
 //! We normalize ASTs recursively checking for these things before comparing
 //! them (i.e. verify that node kind + children match).
 use crate::node_kind::GDScriptNodeKind;
@@ -64,12 +68,34 @@ fn is_annotation_like(kind: GDScriptNodeKind) -> bool {
     kind == GDScriptNodeKind::Annotation || kind == GDScriptNodeKind::Annotations
 }
 
+fn is_line_continuation(node: Node) -> bool {
+    GDScriptNodeKind::get_kind_from_ast_node(node) == GDScriptNodeKind::LineContinuation
+}
+
+/// Returns the only named child of the node, ignoring line continuations, or
+/// `None` if the node has zero or more than one such child.
+fn get_single_named_child_ignoring_line_continuations(node: Node) -> Option<Node> {
+    let mut single_child = None;
+    let mut child_index = 0;
+    while child_index < node.named_child_count() {
+        if let Some(child) = node.named_child(child_index as u32)
+            && !is_line_continuation(child)
+        {
+            if single_child.is_some() {
+                return None;
+            }
+            single_child = Some(child);
+        }
+        child_index += 1;
+    }
+    single_child
+}
+
 fn normalize_node(node: Node, lookup: &[GDScriptNodeKind; 256]) -> NormalizedNode {
     let kind = GDScriptNodeKind::get_kind_from_ast_node(node);
-    if kind == GDScriptNodeKind::ParenthesizedExpression && node.named_child_count() == 1 {
-        let inner = node
-            .named_child(0)
-            .expect("parenthesized expression with one named child has that child");
+    if kind == GDScriptNodeKind::ParenthesizedExpression
+        && let Some(inner) = get_single_named_child_ignoring_line_continuations(node)
+    {
         return normalize_node(inner, lookup);
     }
     let canonical_kind = match kind {
@@ -96,6 +122,10 @@ fn build_normalized_children(node: Node, lookup: &[GDScriptNodeKind; 256]) -> Ve
             continue;
         };
         let kind = GDScriptNodeKind::get_kind_from_ast_node(child);
+        if kind == GDScriptNodeKind::LineContinuation {
+            current_child_index += 1;
+            continue;
+        }
 
         // Merge consecutive annotations before a declaration. When the formatter
         // moves an annotation from being a sibling to being a child of the
@@ -373,6 +403,38 @@ mod tests {
         assert!(structurally_equal(
             "var is_attacking := Input.is_action_pressed(\"attack\") and not animation.is_playing()",
             "var is_attacking := (Input.is_action_pressed(\"attack\") and not animation.is_playing())"
+        ));
+    }
+
+    #[test]
+    fn added_line_continuations_in_method_chain_equal() {
+        assert!(structurally_equal(
+            "var result = node.first().second().third()",
+            "var result = node \\\n\t\t.first() \\\n\t\t.second() \\\n\t\t.third()"
+        ));
+    }
+
+    #[test]
+    fn added_line_continuations_in_binary_operator_equal() {
+        assert!(structurally_equal(
+            "var total = base_value + equipment_bonus + status_bonus",
+            "var total = base_value \\\n\t\t+ equipment_bonus \\\n\t\t+ status_bonus"
+        ));
+    }
+
+    #[test]
+    fn line_continuation_inside_parentheses_normalizes() {
+        assert!(structurally_equal(
+            "var total = base_value + bonus",
+            "var total = (base_value \\\n\t\t+ bonus)"
+        ));
+    }
+
+    #[test]
+    fn line_continuation_does_not_hide_dropped_code() {
+        assert!(!structurally_equal(
+            "var result = node.first().second().third()",
+            "var result = node \\\n\t\t.first() \\\n\t\t.third()"
         ));
     }
 

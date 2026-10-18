@@ -239,6 +239,21 @@ fn generic_type_parameters_never_break() {
 }
 
 #[test]
+fn safe_mode_accepts_added_line_continuations() {
+    // The formatter wraps long method chains without delimiters using
+    // backslashes. Safe mode must not treat the added line continuations as a
+    // structural change.
+    let input = "func test():\n\tvar result = some_object.first_method_call_name().second_method_call_name().third_method_call_name().fourth()\n";
+    let expected = "func test():\n\tvar result = some_object \\\n\t\t\t.first_method_call_name() \\\n\t\t\t.second_method_call_name() \\\n\t\t\t.third_method_call_name() \\\n\t\t\t.fourth()\n";
+    let config = FormatterConfiguration {
+        safe: true,
+        ..Default::default()
+    };
+
+    assert_eq!(format_gdscript(input, &config).unwrap(), expected);
+}
+
+#[test]
 fn editorconfig_applies_quote_style() {
     let mut config = FormatterConfiguration::default();
     gdscript_formatter::editorconfig::apply_editorconfig_to_formatter_config(
