@@ -90,12 +90,15 @@ To exclude files or directories, pass `--exclude` (or `-x`) one or more times, f
 
 Use `--quote-style preserve/single/double` to automatically normalize the string quote style. You can also set the style in your `.editorconfig` file using the key `gdscript_formatter_quote_style`. The default value, `preserve`, leaves existing quotes unchanged.
 
-By default, a function call that takes a multiline lambda puts every argument on its own line. Set `gdscript_formatter_lambda_force_wrap_arguments = false` in your `.editorconfig` file to keep a multiline lambda on the call line when it's the last argument. If the call line is too long, the arguments still wrap:
+Two `.editorconfig` keys control how lambdas are formatted:
 
-```gdscript
-button.pressed.connect(func():
-	print("pressed")
-)
+- `gdscript_formatter_lambda_force_wrap_arguments` (default `true`): set it to `false` to keep a multiline lambda on the call line when it's the last argument, instead of putting every argument on its own line. For example: `button.pressed.connect(func():` followed by the lambda body and a closing `)` on its own line. If the call line is too long, the arguments still wrap.
+- `gdscript_formatter_lambda_inline` (default `never`): controls when short lambdas go on a single line, like `array.map(func(x): return x * 2)`. Use `preserve` to keep lambdas inline only if you wrote them on a single line, or `always` to collapse every lambda that fits within the max line length. This only applies to lambdas with a single statement that isn't a block (no `if`, `for`, `match`, etc.) and has no comments.
+
+```ini
+[*.gd]
+gdscript_formatter_lambda_force_wrap_arguments = false
+gdscript_formatter_lambda_inline = always
 ```
 
 The Godot add-on also reads `gdscript_formatter_format_on_save` from the `.editorconfig` file. This key only affects the add-on and enables or disables format on save for the whole project and overrides each user's add-on setting. For example:

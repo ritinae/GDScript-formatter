@@ -10,13 +10,13 @@
 //! All formatting decisions (where to put spaces, where the code is allowed to
 //! have blank lines, whether a container fits on one line or wraps) live here.
 
-use crate::QuoteStyle;
 use crate::node_kind::GDScriptNodeKind;
 use crate::parser::{ParseInput, RegionWithDisabledFormatting};
 use crate::renderer::{GroupParentFit, RangeRenderElement, RangeSourceBytes, RenderElement};
 use crate::reorder;
 use crate::reorder::DeclarationKind;
 use crate::shared_utils::should_annotation_be_inline;
+use crate::{LambdaInline, QuoteStyle};
 
 fn begin_indent(render_elements: &mut Vec<RenderElement>, level: u16) -> usize {
     let index = render_elements.len();
@@ -1943,7 +1943,7 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
     let mut child_index = 1;
     while child_index < child_count - 1 {
         if let Some(child) = node.child(child_index)
-            && contains_lambda_node(child)
+            && contains_multiline_lambda_node(context.input, child)
         {
             contains_lambda = true;
             break;
@@ -2990,6 +2990,7 @@ fn process_lambda(context: &mut FormatterContext, node: tree_sitter::Node) {
     }
 
     let group_index = begin_group(context.render_elements);
+    let is_inline_candidate = is_inline_lambda_candidate(context.input, node);
 
     let do_add_comma_before_trailing_comment = node.parent().is_some_and(|parent| {
         let parent_kind = GDScriptNodeKind::get_kind_from_ast_node(parent);
@@ -3036,17 +3037,20 @@ fn process_lambda(context: &mut FormatterContext, node: tree_sitter::Node) {
         index += 1;
     }
 
-    // Always break lambda bodies, even when the context.input wrote the body inline.
-    // This also forces the surrounding collection or argument group to break.
+    // Always break lambda bodies, even when the context.input wrote the body
+    // inline, unless the user allows short inline lambdas. This also forces the
+    // surrounding collection or argument group to break.
     let mut has_body = false;
     let mut current_index: u32 = 0;
     while current_index < child_count {
         if let Some(child) = node.child(current_index) {
             if GDScriptNodeKind::get_kind_from_ast_node(child) == GDScriptNodeKind::Body {
                 has_body = true;
-                context
-                    .render_elements
-                    .push(RenderElement::ForceBreakingParent);
+                if !is_inline_candidate {
+                    context
+                        .render_elements
+                        .push(RenderElement::ForceBreakingParent);
+                }
                 break;
             }
         }
@@ -3078,22 +3082,102 @@ fn process_lambda(context: &mut FormatterContext, node: tree_sitter::Node) {
         && is_lambda_in_parenthesized_expression
         && !is_parenthesized_lambda_in_attribute_chain
     {
+        if is_inline_candidate {
+            // Only put the closing parenthesis on a new line if the lambda
+            // breaks, otherwise keep it right after the inline body.
+            let line_index = context.render_elements.len() + 1;
+            context.render_elements.push(RenderElement::Branch {
+                if_single_line: None,
+                if_multiline: Some(RangeRenderElement {
+                    start: line_index,
+                    end: line_index + 1,
+                }),
+            });
+        }
         context.render_elements.push(RenderElement::HardLine);
     }
 
     finish_group(context.render_elements, group_index);
 }
 
-/// Returns true if the node or any of its children contains a lambda. Lambda
-/// bodies force every enclosing delimiter to use a multiline layout.
-fn contains_lambda_node(node: tree_sitter::Node) -> bool {
+/// Returns true if the user allows inline lambdas and this lambda can stay on a
+/// single line: its body is a single simple statement without comments, line
+/// continuations, or nested lambdas, and with `LambdaInline::Preserve`, it was
+/// written on one line in the source. The formatter still breaks the lambda
+/// body if it doesn't fit within the max line length.
+fn is_inline_lambda_candidate(input: &ParseInput, lambda: tree_sitter::Node) -> bool {
+    if input.lambda_inline == LambdaInline::Never {
+        return false;
+    }
+    let mut body = None;
+    let mut child_index = 0;
+    while child_index < lambda.child_count() {
+        if let Some(child) = lambda.child(child_index)
+            && GDScriptNodeKind::get_kind_from_ast_node(child) == GDScriptNodeKind::Body
+        {
+            body = Some(child);
+            break;
+        }
+        child_index += 1;
+    }
+    let Some(body) = body else {
+        return false;
+    };
+    if body.child_count() != 1 {
+        return false;
+    }
+    let Some(statement) = body.child(0) else {
+        return false;
+    };
+    if !matches!(
+        GDScriptNodeKind::get_kind_from_ast_node(statement),
+        GDScriptNodeKind::ExpressionStatement
+            | GDScriptNodeKind::ReturnStatement
+            | GDScriptNodeKind::PassStatement
+    ) {
+        return false;
+    }
+    if input.lambda_inline == LambdaInline::Preserve
+        && has_newline(input.source, lambda.start_byte(), statement.end_byte())
+    {
+        return false;
+    }
+
+    fn contains_node_preventing_inline(node: tree_sitter::Node) -> bool {
+        if matches!(
+            GDScriptNodeKind::get_kind_from_ast_node(node),
+            GDScriptNodeKind::Lambda
+                | GDScriptNodeKind::Comment
+                | GDScriptNodeKind::LineContinuation
+        ) {
+            return true;
+        }
+        let mut child_index = 0;
+        while child_index < node.child_count() {
+            if let Some(child) = node.child(child_index)
+                && contains_node_preventing_inline(child)
+            {
+                return true;
+            }
+            child_index += 1;
+        }
+        false
+    }
+    !contains_node_preventing_inline(statement)
+}
+
+/// Returns true if the node or any of its children contains a lambda that
+/// must use a multiline layout. Multiline lambda bodies force every enclosing
+/// delimiter to use a multiline layout.
+fn contains_multiline_lambda_node(input: &ParseInput, node: tree_sitter::Node) -> bool {
     if GDScriptNodeKind::get_kind_from_ast_node(node) == GDScriptNodeKind::Lambda {
-        return true;
+        // Inline lambda candidates cannot contain other lambdas.
+        return !is_inline_lambda_candidate(input, node);
     }
     let mut child_index = 0;
     while child_index < node.child_count() {
         if let Some(child) = node.child(child_index)
-            && contains_lambda_node(child)
+            && contains_multiline_lambda_node(input, child)
         {
             return true;
         }
@@ -3134,6 +3218,7 @@ fn find_huggable_trailing_lambda_argument<'tree>(
             last_element
         };
     if GDScriptNodeKind::get_kind_from_ast_node(last_element) != GDScriptNodeKind::Lambda
+        || is_inline_lambda_candidate(input, last_element)
         || is_lambda_body_ending_with_comment(last_element)
     {
         return None;
@@ -3142,7 +3227,7 @@ fn find_huggable_trailing_lambda_argument<'tree>(
     while child_index < last_element_index {
         let child = arguments.child(child_index)?;
         if GDScriptNodeKind::get_kind_from_ast_node(child) == GDScriptNodeKind::Comment
-            || contains_lambda_node(child)
+            || contains_multiline_lambda_node(input, child)
         {
             return None;
         }

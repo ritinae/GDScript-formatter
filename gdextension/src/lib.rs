@@ -2,7 +2,7 @@ use gdscript_formatter::linter::{
     LintIssue, LintSeverity, LinterConfig, lint_gdscript_with_config,
 };
 use gdscript_formatter::{
-    FormatterConfiguration, PrinterConfiguration, QuoteStyle, format_gdscript,
+    FormatterConfiguration, LambdaInline, PrinterConfiguration, QuoteStyle, format_gdscript,
 };
 use godot::builtin::{Array, PackedStringArray};
 use godot::prelude::{
@@ -86,6 +86,16 @@ fn dict_to_formatter_config(dict: &Dictionary<Variant, Variant>) -> FormatterCon
         match variant.try_to::<Dictionary<Variant, Variant>>() {
             Ok(sub_dict) => result.printer = dict_to_printer_config(&sub_dict),
             Err(error) => godot_error!("Config 'printer' is invalid: {}", error),
+        }
+    }
+    if let Some(variant) = dict.get("lambda_inline") {
+        match variant
+            .try_to::<GString>()
+            .ok()
+            .and_then(|gstr| LambdaInline::from_name(&gstr.to_string()))
+        {
+            Some(valid_value) => result.lambda_inline = valid_value,
+            None => godot_error!("Config 'lambda_inline' is invalid"),
         }
     }
     if let Some(variant) = dict.get("quote_style") {
