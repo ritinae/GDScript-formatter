@@ -14,7 +14,8 @@ func test_hug():
 	)
 
 
-# The lambda body ends with a match statement, so no trailing comma.
+# Godot can't parse a trailing comma after a match branch, so a lambda ending
+# with a match statement keeps the wrapped layout.
 func test_match():
 	[0, 2, 3].filter(func(value: int):
 		match value:
@@ -23,7 +24,6 @@ func test_match():
 			_:
 				return true
 	)
-
 
 
 # The whole lambda header, including the parameters, must fit on the call line.
@@ -37,6 +37,18 @@ func test_header_length():
 		print(i)
 		return enemy.health < enemy.max_health
 	)
+
+
+# A hugged lambda inside another multiline call needs the trailing comma after
+# its body, or Godot fails to parse the closing parenthesis.
+func test_nested_in_wrapped_call():
+	debug_menu.add_items("Cheats", [
+		create_button(func():
+			hero.health = hero.max_health
+			hero.global_position = spawn_point.global_position
+		),
+	])
+
 
 # Nested lambdas both stay on their call lines.
 func test_nested():

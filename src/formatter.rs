@@ -1986,14 +1986,20 @@ fn process_container(context: &mut FormatterContext, node: tree_sitter::Node) {
         && !last_was_comment
         && !lambda_has_trailing_comment
     {
-        let text_index = context.render_elements.len() + 1;
-        context.render_elements.push(RenderElement::Branch {
-            if_single_line: None,
-            if_multiline: Some(RangeRenderElement {
-                start: text_index,
-                end: text_index + 1,
-            }),
-        });
+        // A hugged lambda always needs the trailing comma, even when the
+        // arguments stay on the call line. Without it, Godot fails to parse
+        // the closing parenthesis when the call is nested in another
+        // multiline call or container.
+        if hugged_lambda.is_none() {
+            let text_index = context.render_elements.len() + 1;
+            context.render_elements.push(RenderElement::Branch {
+                if_single_line: None,
+                if_multiline: Some(RangeRenderElement {
+                    start: text_index,
+                    end: text_index + 1,
+                }),
+            });
+        }
         context.render_elements.push(RenderElement::TextStatic(","));
     }
 
@@ -3200,9 +3206,13 @@ fn contains_multiline_lambda_node(input: &ParseInput, node: tree_sitter::Node) -
 ///
 /// ```gdscript
 /// timer.timeout.connect(func():
-///     print("timeout")
+///     print("timeout"),
 /// )
 /// ```
+///
+/// Lambdas ending with a match statement are never hugged: Godot can't parse a
+/// trailing comma after a match branch, and without the comma, a hugged lambda
+/// fails to parse inside another multiline call.
 fn find_huggable_trailing_lambda_argument<'tree>(
     input: &ParseInput,
     arguments: tree_sitter::Node<'tree>,
@@ -3228,6 +3238,7 @@ fn find_huggable_trailing_lambda_argument<'tree>(
     if GDScriptNodeKind::get_kind_from_ast_node(last_element) != GDScriptNodeKind::Lambda
         || is_inline_lambda_candidate(input, last_element)
         || is_lambda_body_ending_with_comment(last_element)
+        || lambda_ends_with_match_node(last_element)
     {
         return None;
     }
