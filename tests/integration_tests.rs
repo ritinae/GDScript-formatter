@@ -337,6 +337,20 @@ fn lambda_inline_always() {
 }
 
 #[test]
+fn lambda_inline_chain_wrap() {
+    let config = FormatterConfiguration {
+        lambda_inline: LambdaInline::Always,
+        safe: true,
+        ..Default::default()
+    };
+    test_file_with_config(
+        Path::new("tests/lambda_options/input/inline_chain_wrap.gd"),
+        &config,
+        true,
+    );
+}
+
+#[test]
 fn lambda_inline_prefer_call_line() {
     let config = FormatterConfiguration {
         lambda_force_wrap_arguments: false,

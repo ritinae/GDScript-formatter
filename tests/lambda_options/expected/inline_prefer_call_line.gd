@@ -10,9 +10,9 @@ func test_prefer_call_line():
 	var damaged_enemies = spawned_enemies.filter(func(enemy: Enemy) -> bool:
 		return enemy.health < enemy.max_health,
 	)
-	var alive_count := enemies.filter(func(enemy: Enemy) -> bool:
-		return enemy.is_alive() and enemy.visible,
-	).size()
+	var alive_count := enemies \
+			.filter(func(enemy: Enemy) -> bool: return enemy.is_alive() and enemy.visible) \
+			.size()
 
 
 # The arguments still wrap when the line up to the lambda header is too long.

@@ -10,6 +10,7 @@ This file documents the changes made to the formatter with each release.
 - Add the `.editorconfig` option `gdscript_formatter_lambda_force_wrap_arguments`: set it to `false` to keep a multiline lambda that ends an argument list on the call line instead of wrapping every argument
 - Add the `.editorconfig` option `gdscript_formatter_lambda_inline`: set it to `preserve` to keep short lambdas written on one line inline, or `always` to collapse every short lambda that fits on one line
 - Add the `.editorconfig` option `gdscript_formatter_lambda_inline_prefer_call_line`: set it to `true` to keep an inline lambda that doesn't fit on the call line and move its body to the next line, instead of wrapping the arguments
+- With `gdscript_formatter_lambda_inline` enabled, wrap a method chain that only overflows because of its inline lambdas at the dots first, so each lambda gets a line of its own and stays inline when it fits
 
 ### Fixed
 
@@ -19,6 +20,7 @@ This file documents the changes made to the formatter with each release.
 - Fix a lambda argument in the middle of a method chain (like `items.filter(func(item): ...).size()`) breaking the whole chain at every dot with line continuations
 - Safe mode: fix formatting failing with a structural change error when the formatter wraps a long statement with line continuations (`\`)
 - Fix converting the quotes of a multiline string with `--quote-style` re-indenting the lines inside the string
+- Indent the arguments of a method call in a method chain wrapped with line continuations (`\`) with the method name, instead of the start of the statement
 
 ## Release 0.27.0 (2026-09-25)
 

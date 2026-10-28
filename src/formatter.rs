@@ -2806,11 +2806,17 @@ fn process_attribute(context: &mut FormatterContext, node: tree_sitter::Node) {
                     {
                         process_method_call_name(context, call_node);
                         finish_indent(context.render_elements, continuation_indent_index);
+                        // Multiline arguments line up with the method name.
+                        let arguments_indent_index = begin_indent(
+                            context.render_elements,
+                            context.input.continuation_indent_level,
+                        );
                         process_method_call_arguments(
                             context,
                             call_node,
                             attribute_index + 2 >= child_count,
                         );
+                        finish_indent(context.render_elements, arguments_indent_index);
                     } else {
                         process_node(context, call_node);
                         finish_indent(context.render_elements, continuation_indent_index);
@@ -2848,11 +2854,16 @@ fn process_attribute(context: &mut FormatterContext, node: tree_sitter::Node) {
                 {
                     process_method_call_name(context, call_node);
                     finish_indent(context.render_elements, continuation_indent_index);
+                    // When the chain wraps, multiline arguments line up with
+                    // the method name instead of the start of the statement.
+                    let arguments_indent_index =
+                        begin_indent_if_break(context.render_elements, chain_indent_level);
                     process_method_call_arguments(
                         context,
                         call_node,
                         attribute_index + 2 >= child_count,
                     );
+                    finish_indent(context.render_elements, arguments_indent_index);
                 } else {
                     process_node(context, call_node);
                     finish_indent(context.render_elements, continuation_indent_index);
@@ -2912,8 +2923,19 @@ fn process_method_call_arguments(
         return;
     };
 
+    // Inline lambdas count toward the chain's line length in full, so a chain
+    // that only overflows because of them wraps at the dots first and gives
+    // each lambda a line of its own. Chains with multiline lambdas keep the
+    // chain on one line and wrap the lambdas instead.
+    let has_only_inline_lambda_arguments = has_lambda_argument(args)
+        && attribute_call
+            .parent()
+            .is_some_and(|chain| has_only_inline_lambdas_in_chain(context.input, chain));
+
     if is_last_call_in_chain {
-        let group_index = if does_attribute_chain_allow_implicit_line_continuation(attribute_call) {
+        let group_index = if has_only_inline_lambda_arguments
+            || does_attribute_chain_allow_implicit_line_continuation(attribute_call)
+        {
             begin_group(context.render_elements)
         } else {
             // This chain doesn't have surrounding delimiters, so GScript will
@@ -2933,28 +2955,59 @@ fn process_method_call_arguments(
         process_node(context, args);
         finish_group(context.render_elements, group_index);
     } else {
-        let mut has_lambda_argument = false;
-        let mut argument_index = 1;
-        while argument_index < args.child_count() - 1 {
-            if let Some(argument) = args.child(argument_index)
-                && GDScriptNodeKind::get_kind_from_ast_node(argument) == GDScriptNodeKind::Lambda
-            {
-                has_lambda_argument = true;
-                break;
-            }
-            argument_index += 1;
-        }
-
         // Prevent a multiline argument list from forcing the surrounding
         // method call chain to use explicit line continuations (trailing "\").
-        let group_index = begin_group_until_first_line_break(context.render_elements);
-        if has_lambda_argument {
+        let group_index = if has_only_inline_lambda_arguments {
+            begin_group(context.render_elements)
+        } else {
+            begin_group_until_first_line_break(context.render_elements)
+        };
+        if has_lambda_argument(args) {
             process_node(context, args);
         } else {
             process_method_arguments_flat(context, args);
         }
         finish_group(context.render_elements, group_index);
     }
+}
+
+fn has_lambda_argument(args: tree_sitter::Node) -> bool {
+    let mut argument_index = 0;
+    while argument_index < args.child_count() {
+        if let Some(argument) = args.child(argument_index)
+            && GDScriptNodeKind::get_kind_from_ast_node(argument) == GDScriptNodeKind::Lambda
+        {
+            return true;
+        }
+        argument_index += 1;
+    }
+    false
+}
+
+/// Returns `true` if every lambda passed to a method call in the attribute
+/// chain can be placed on a single line.
+fn has_only_inline_lambdas_in_chain(input: &ParseInput, chain: tree_sitter::Node) -> bool {
+    let mut child_index = 1;
+    while child_index < chain.child_count() {
+        if let Some(call) = chain.child(child_index)
+            && GDScriptNodeKind::get_kind_from_ast_node(call) == GDScriptNodeKind::AttributeCall
+            && let Some(args) = call.child(1)
+        {
+            let mut argument_index = 0;
+            while argument_index < args.child_count() {
+                if let Some(argument) = args.child(argument_index)
+                    && GDScriptNodeKind::get_kind_from_ast_node(argument)
+                        == GDScriptNodeKind::Lambda
+                    && !is_inline_lambda_candidate(input, argument)
+                {
+                    return false;
+                }
+                argument_index += 1;
+            }
+        }
+        child_index += 1;
+    }
+    true
 }
 
 fn process_method_arguments_flat(context: &mut FormatterContext, args: tree_sitter::Node) {
